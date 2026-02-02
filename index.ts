@@ -1,0 +1,106 @@
+import express from "express";
+import cors from "cors";
+import puppeteer from "puppeteer";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+
+const app = express();
+app.use(cors());
+
+const server = new Server(
+  { name: "web-page-reader", version: "1.0.0" },
+  { capabilities: { tools: {} } }
+);
+
+let transport: SSEServerTransport | null = null;
+
+async function getPageData(url: string) {
+  const browser = await puppeteer.launch({ 
+    headless: true, 
+    args: ["--no-sandbox", "--disable-setuid-sandbox"] 
+  });
+  try {
+    const page = await browser.newPage();
+    await page.goto(url, { waitUntil: "networkidle0", timeout: 30000 });
+    
+    const data = await page.evaluate(() => ({
+      title: document.title,
+      text: document.body.innerText.trim(),
+      links: [...document.querySelectorAll("a")].slice(0, 20).map(a => ({ 
+        href: a.href, 
+        text: a.textContent?.trim() || "" 
+      })),
+      images: [...document.querySelectorAll("img")].slice(0, 10).map(img => ({ 
+        src: img.src, 
+        alt: img.alt || null 
+      })),
+      language: document.documentElement.lang || "unknown"
+    }));
+
+    return JSON.stringify({ 
+      url, 
+      ...data, 
+      metadata: { scrapedAt: new Date().toISOString() } 
+    }, null, 2);
+  } finally {
+    await browser.close();
+  }
+}
+
+server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  tools: [{
+    name: "read_webpage",
+    description: "Fetches a URL and returns the text, links, and metadata as JSON.",
+    inputSchema: {
+      type: "object",
+      properties: { 
+        url: { type: "string", description: "The URL of the webpage to read" } 
+      },
+      required: ["url"],
+    },
+  }],
+}));
+
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  if (request.params.name === "read_webpage") {
+    const url = request.params.arguments?.url as string;
+    try {
+      const pageData = await getPageData(url);
+      return { content: [{ type: "text", text: pageData }] };
+    } catch (error: any) {
+      return { 
+        content: [{ type: "text", text: `Error: ${error.message}` }], 
+        isError: true 
+      };
+    }
+  }
+  throw new Error("Tool not found");
+});
+
+app.get("/sse", async (req, res) => {
+  console.log("Client connecting to SSE...");
+  transport = new SSEServerTransport("/messages", res);
+  try {
+    await server.connect(transport);
+    console.log("MCP Server connected to SSE transport.");
+  } catch (err) {
+    console.error("Failed to connect:", err);
+  }
+  req.on("close", () => {
+    transport = null;
+  });
+});
+
+app.post("/messages", express.json(), async (req, res) => {
+  if (!transport) {
+    return res.status(400).json({ error: "No session" });
+  }
+  try {
+    await transport.handlePostMessage(req, res, req.body);
+  } catch (err) {
+    if (!res.headersSent) res.status(500).send("Internal Error");
+  }
+});
+
+app.listen(3000, () => console.log("🚀 Server running on port 3000"));
