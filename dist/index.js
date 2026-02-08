@@ -4,13 +4,16 @@ import puppeteer from "puppeteer";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { DuckDuckGoSearchService } from "./duckduckgo-search.service.js";
 const PORT = process.env.PORT || 3000;
 const MAX_LINKS = parseInt(process.env.MAX_LINKS || "20", 10);
 const MAX_IMAGES = parseInt(process.env.MAX_IMAGES || "10", 10);
 const PAGE_TIMEOUT = parseInt(process.env.PAGE_TIMEOUT || "30000", 10);
+const DDG_MAX_RESULTS = parseInt(process.env.DDG_MAX_RESULTS || "10", 10);
 const app = express();
 app.use(cors());
 const server = new Server({ name: "web-page-reader", version: "1.0.0" }, { capabilities: { tools: {} } });
+const searchService = new DuckDuckGoSearchService({ pageTimeout: PAGE_TIMEOUT });
 let transport = null;
 async function getPageData(url) {
     const browser = await puppeteer.launch({
@@ -54,6 +57,26 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                 },
                 required: ["url"],
             },
+        }, {
+            name: "duckduckgo_search",
+            description: "Search DuckDuckGo and return URL and title for each result.",
+            inputSchema: {
+                type: "object",
+                properties: {
+                    query: {
+                        type: "string",
+                        description: "The search query"
+                    },
+                    maxResults: {
+                        type: "number",
+                        description: "Maximum number of search results to return",
+                        minimum: 1,
+                        maximum: 50,
+                        default: 10
+                    }
+                },
+                required: ["query"],
+            },
         }],
 }));
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -62,6 +85,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         try {
             const pageData = await getPageData(url);
             return { content: [{ type: "text", text: pageData }] };
+        }
+        catch (error) {
+            return {
+                content: [{ type: "text", text: `Error: ${error.message}` }],
+                isError: true
+            };
+        }
+    }
+    if (request.params.name === "duckduckgo_search") {
+        const query = request.params.arguments?.query;
+        const maxResults = request.params.arguments?.maxResults;
+        if (!query) {
+            return {
+                content: [{ type: "text", text: "Error: 'query' parameter is required" }],
+                isError: true
+            };
+        }
+        try {
+            const results = await searchService.search(query, maxResults || DDG_MAX_RESULTS);
+            return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
         }
         catch (error) {
             return {

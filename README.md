@@ -55,6 +55,7 @@ You can configure the server using the following environment variables:
 | `MAX_LINKS` | Max links to scrape per page | `20` |
 | `MAX_IMAGES` | Max images to scrape per page | `10` |
 | `PAGE_TIMEOUT` | Page load timeout in milliseconds | `30000` (30s) |
+| `DDG_MAX_RESULTS` | Maximum search results per query | `10` |
 
 Example:
 
@@ -122,17 +123,51 @@ Explanation:
 ## How It Works
 
 1. **SSE Endpoint**: `/sse` handles SSE connections to Claude.
-2. **Tool Registration**: `read_webpage` accepts a URL and returns structured webpage data as JSON.
-3. **Page Scraping**:
+2. **Tool Registration**: The server provides two tools:
+   * `read_webpage` - Accepts a URL and returns structured webpage data as JSON
+   * `duckduckgo_search` - Searches DuckDuckGo and returns search results with URLs and titles
+3. **Page Scraping** (for `read_webpage`):
 
    * Uses Puppeteer in headless mode
    * Captures page title, text, links, images, and language
    * Returns data with a `scrapedAt` timestamp
-4. **Error Handling**: Any errors during scraping are returned in the `isError` field.
+4. **Search Functionality** (for `duckduckgo_search`):
+
+   * Constructs DuckDuckGo search URL with encoded query
+   * Uses Puppeteer to navigate to search results
+   * Extracts URLs and titles from result links
+   * Returns up to `DDG_MAX_RESULTS` search results
+5. **Error Handling**: Any errors during operations are returned in the `isError` field.
 
 ---
 
 ## Example Usage in Claude
+
+### Search Tool Example
+Ask Claude:
+```text
+Search for TypeScript best practices and give me the top 5 results
+```
+
+Response JSON will include:
+```json
+[
+  {
+    "url": "https://www.typescriptlang.org/docs/best-practices.html",
+    "title": "TypeScript - Best Practices"
+  },
+  {
+    "url": "https://www.typescriptlang.org/docs/cheatsheets.html",
+    "title": "TypeScript - Cheatsheets"
+  }
+]
+```
+
+### Reading Webpages Example
+Ask Claude:
+```text
+Read the page at http://example.com and summarize its content
+```
 
 Ask Claude:
 
