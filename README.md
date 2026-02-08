@@ -45,9 +45,28 @@ yarn install
 
 ---
 
+## Configuration
+
+You can configure the server using the following environment variables:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PORT` | The port the server listens on | `3000` |
+| `MAX_LINKS` | Max links to scrape per page | `20` |
+| `MAX_IMAGES` | Max images to scrape per page | `10` |
+| `PAGE_TIMEOUT` | Page load timeout in milliseconds | `30000` (30s) |
+
+Example:
+
+```bash
+PORT=4000 MAX_LINKS=50 npm start
+```
+
+---
+
 ## Build and Run
 
-The project is written in TypeScript. You can either run it directly in development mode or build it first.
+The project is written in TypeScript. Source code is located in the `src` directory. You can either run it directly in development mode or build it first.
 
 ### Development Mode (no build required)
 
@@ -136,8 +155,7 @@ Response JSON will include:
 
 * Puppeteer may require additional Linux dependencies (`libnss3`, `libx11-xcb1`, etc.).
 * By default, Puppeteer runs headless with sandbox disabled.
-* Limits:
-
-  * Max 20 links per page
-  * Max 10 images per page
-  * Page load timeout: 30s
+* Configurable Limits (defaults):
+  * Max 20 links per page (`MAX_LINKS`)
+  * Max 10 images per page (`MAX_IMAGES`)
+  * Page load timeout: 30s (`PAGE_TIMEOUT`)
