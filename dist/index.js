@@ -5,10 +5,11 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { DuckDuckGoSearchService } from "./duckduckgo-search.service.js";
+import TurndownService from "turndown";
 const PORT = process.env.PORT || 3000;
 const MAX_LINKS = parseInt(process.env.MAX_LINKS || "20", 10);
 const MAX_IMAGES = parseInt(process.env.MAX_IMAGES || "10", 10);
-const PAGE_TIMEOUT = parseInt(process.env.PAGE_TIMEOUT || "30000", 10);
+const PAGE_TIMEOUT = parseInt(process.env.PAGE_TIMEOUT || "60000", 10);
 const DDG_MAX_RESULTS = parseInt(process.env.DDG_MAX_RESULTS || "10", 10);
 const app = express();
 app.use(cors());
@@ -22,7 +23,7 @@ async function getPageData(url) {
     });
     try {
         const page = await browser.newPage();
-        await page.goto(url, { waitUntil: "networkidle0", timeout: PAGE_TIMEOUT });
+        await page.goto(url, { waitUntil: "networkidle2", timeout: PAGE_TIMEOUT });
         const data = await page.evaluate((maxLinks, maxImages) => ({
             title: document.title,
             text: document.body.innerText.trim(),
@@ -46,10 +47,95 @@ async function getPageData(url) {
         await browser.close();
     }
 }
+async function getPageMarkdown(url) {
+    const browser = await puppeteer.launch({
+        headless: true,
+        protocolTimeout: 60000,
+        args: [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-features=site-per-process",
+            "--disable-features=IsolateOrigins",
+            "--disable-web-security"
+        ]
+    });
+    async function safeOperation(operation, maxRetries = 3) {
+        let lastError;
+        for (let i = 0; i < maxRetries; i++) {
+            try {
+                return await operation();
+            }
+            catch (error) {
+                lastError = error;
+                if (error.message?.includes('Navigating frame was detached') ||
+                    error.message?.includes('Execution context was destroyed') ||
+                    error.message?.includes('Target closed')) {
+                    console.log(`Retry ${i + 1}/${maxRetries} after error: ${error.message}`);
+                    if (i < maxRetries - 1) {
+                        await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+                        continue;
+                    }
+                }
+                throw error;
+            }
+        }
+        throw lastError;
+    }
+    try {
+        return await safeOperation(async () => {
+            const page = await browser.newPage();
+            page.setDefaultNavigationTimeout(PAGE_TIMEOUT);
+            page.setDefaultTimeout(PAGE_TIMEOUT);
+            const response = await page.goto(url, {
+                waitUntil: "domcontentloaded",
+                timeout: PAGE_TIMEOUT
+            });
+            if (!response) {
+                throw new Error("No response received from the server");
+            }
+            if (response.status() >= 400) {
+                throw new Error(`HTTP error: ${response.status()}`);
+            }
+            if (page.url().startsWith("chrome-error://")) {
+                throw new Error("Browser error page loaded");
+            }
+            await page.waitForFunction(() => document.readyState === "complete");
+            const html = await page.content();
+            const cleanedHtml = html.replace(/<(script|style|link|meta|base|noscript|iframe)[^>]*>.*?<\/\1>/gis, '').replace(/<(script|style|link|meta|base|noscript|iframe)[^>]*\/?>/gis, '');
+            const title = await page.title();
+            const description = await page.evaluate(() => document.querySelector('meta[name="description"]')?.getAttribute("content") || null);
+            const turndownService = new TurndownService({
+                headingStyle: 'atx',
+                codeBlockStyle: 'fenced'
+            });
+            const markdown = turndownService.turndown(cleanedHtml);
+            return JSON.stringify({
+                title,
+                description,
+                markdown,
+                url
+            }, null, 2);
+        });
+    }
+    finally {
+        await browser.close();
+    }
+}
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [{
             name: "read_webpage",
             description: "Fetches a URL and returns the text, links, and metadata as JSON.",
+            inputSchema: {
+                type: "object",
+                properties: {
+                    url: { type: "string", description: "The URL of the webpage to read" }
+                },
+                required: ["url"],
+            },
+        }, {
+            name: "read_webpage_markdown",
+            description: "Fetches a URL and returns the full page content converted to markdown format for detailed overview.",
             inputSchema: {
                 type: "object",
                 properties: {
@@ -84,6 +170,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const url = request.params.arguments?.url;
         try {
             const pageData = await getPageData(url);
+            return { content: [{ type: "text", text: pageData }] };
+        }
+        catch (error) {
+            return {
+                content: [{ type: "text", text: `Error: ${error.message}` }],
+                isError: true
+            };
+        }
+    }
+    if (request.params.name === "read_webpage_markdown") {
+        const url = request.params.arguments?.url;
+        try {
+            const pageData = await getPageMarkdown(url);
             return { content: [{ type: "text", text: pageData }] };
         }
         catch (error) {
