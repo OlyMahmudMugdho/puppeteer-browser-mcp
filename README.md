@@ -6,12 +6,17 @@ This guide explains how to install, build, and run the **Puppeteer Browser MCP S
 
 ## Features
 
-* Reads any webpage and returns structured JSON:
-
+* **read_webpage** - Reads any webpage and returns structured JSON:
   * Text content
   * Links
   * Images
   * Language and metadata
+* **read_webpage_markdown** - Converts webpage to clean markdown format:
+  * Uses Mozilla Readability for content extraction
+  * Removes navigation, sidebar, footer, ads
+  * Returns clean article content with title and description
+  * Ideal for detailed page overviews and LLM processing
+* **duckduckgo_search** - Search DuckDuckGo and return results
 * Uses Puppeteer for headless browsing
 * SSE transport to communicate with Claude
 * Easy to build and run with TypeScript support
@@ -54,7 +59,7 @@ You can configure the server using the following environment variables:
 | `PORT` | The port the server listens on | `3000` |
 | `MAX_LINKS` | Max links to scrape per page | `20` |
 | `MAX_IMAGES` | Max images to scrape per page | `10` |
-| `PAGE_TIMEOUT` | Page load timeout in milliseconds | `30000` (30s) |
+| `PAGE_TIMEOUT` | Page load timeout in milliseconds | `60000` (60s) |
 | `DDG_MAX_RESULTS` | Maximum search results per query | `10` |
 
 Example:
@@ -123,21 +128,25 @@ Explanation:
 ## How It Works
 
 1. **SSE Endpoint**: `/sse` handles SSE connections to Claude.
-2. **Tool Registration**: The server provides two tools:
+2. **Tool Registration**: The server provides three tools:
    * `read_webpage` - Accepts a URL and returns structured webpage data as JSON
+   * `read_webpage_markdown` - Converts a URL to clean markdown using Mozilla Readability
    * `duckduckgo_search` - Searches DuckDuckGo and returns search results with URLs and titles
 3. **Page Scraping** (for `read_webpage`):
-
    * Uses Puppeteer in headless mode
    * Captures page title, text, links, images, and language
    * Returns data with a `scrapedAt` timestamp
-4. **Search Functionality** (for `duckduckgo_search`):
-
+4. **Markdown Conversion** (for `read_webpage_markdown`):
+   * Uses Puppeteer to fetch fully rendered page
+   * Extracts main content using Mozilla Readability
+   * Converts to markdown using Turndown
+   * Returns: title, description, markdown, url
+5. **Search Functionality** (for `duckduckgo_search`):
    * Constructs DuckDuckGo search URL with encoded query
    * Uses Puppeteer to navigate to search results
    * Extracts URLs and titles from result links
    * Returns up to `DDG_MAX_RESULTS` search results
-5. **Error Handling**: Any errors during operations are returned in the `isError` field.
+6. **Error Handling**: Any errors during operations are returned in the `isError` field.
 
 ---
 
@@ -169,20 +178,27 @@ Ask Claude:
 Read the page at http://example.com and summarize its content
 ```
 
-Ask Claude:
-
-```text
-Read the page at http://example.com and summarize its content
-```
-
 Response JSON will include:
-
 * `title`
 * `text`
 * `links`
 * `images`
 * `language`
 * `metadata.scrapedAt`
+
+### Reading Webpages as Markdown Example
+Ask Claude:
+```text
+Read the page at https://example.com and give me the full content in markdown
+```
+
+Response JSON will include:
+* `title` - Page title
+* `description` - Article excerpt/description
+* `markdown` - Full page content in markdown format
+* `url` - The URL that was scraped
+
+This tool uses Mozilla Readability to extract clean article content, making it ideal for getting detailed page overviews.
 
 ---
 
@@ -193,4 +209,4 @@ Response JSON will include:
 * Configurable Limits (defaults):
   * Max 20 links per page (`MAX_LINKS`)
   * Max 10 images per page (`MAX_IMAGES`)
-  * Page load timeout: 30s (`PAGE_TIMEOUT`)
+  * Page load timeout: 60s (`PAGE_TIMEOUT`)
