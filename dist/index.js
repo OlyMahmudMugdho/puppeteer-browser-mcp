@@ -6,6 +6,8 @@ import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { DuckDuckGoSearchService } from "./duckduckgo-search.service.js";
 import TurndownService from "turndown";
+import { Readability } from "@mozilla/readability";
+import { JSDOM } from "jsdom";
 const PORT = process.env.PORT || 3000;
 const MAX_LINKS = parseInt(process.env.MAX_LINKS || "20", 10);
 const MAX_IMAGES = parseInt(process.env.MAX_IMAGES || "10", 10);
@@ -102,17 +104,20 @@ async function getPageMarkdown(url) {
             }
             await page.waitForFunction(() => document.readyState === "complete");
             const html = await page.content();
-            const cleanedHtml = html.replace(/<(script|style|link|meta|base|noscript|iframe)[^>]*>.*?<\/\1>/gis, '').replace(/<(script|style|link|meta|base|noscript|iframe)[^>]*\/?>/gis, '');
-            const title = await page.title();
-            const description = await page.evaluate(() => document.querySelector('meta[name="description"]')?.getAttribute("content") || null);
+            const doc = new JSDOM(html, { url });
+            const reader = new Readability(doc.window.document);
+            const article = reader.parse();
+            if (!article || !article.content) {
+                throw new Error("Could not extract article content");
+            }
             const turndownService = new TurndownService({
                 headingStyle: 'atx',
                 codeBlockStyle: 'fenced'
             });
-            const markdown = turndownService.turndown(cleanedHtml);
+            const markdown = turndownService.turndown(article.content);
             return JSON.stringify({
-                title,
-                description,
+                title: article.title,
+                description: article.excerpt,
                 markdown,
                 url
             }, null, 2);
